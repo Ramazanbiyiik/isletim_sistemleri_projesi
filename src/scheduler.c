@@ -4,41 +4,34 @@
 static int currentTime = 0;
 static TaskInfo* currentTask = NULL;
 
-/* KUYRUK ZAMANLARI (FCFS Sıralaması İçin) */
+/* GÖREVLERİN KUYRUĞA GİRİŞ ZAMANI (Sıralama İçin) */
 static long long taskQueueTimes[MAX_TASKS];
 
 void initScheduler() {
     for(int i=0; i<MAX_TASKS; i++) taskQueueTimes[i] = 0;
 }
 
-/* ZAMAN AŞIMI KONTROLÜ (DÜZELTİLMİŞ MANTIK) */
+/* ZAMAN AŞIMI KONTROLÜ */
 void checkTimeouts() {
     int activePriority = -1;
-    
-    // Eğer şu an çalışan bir görev varsa, onun önceliğini al
-    if (currentTask != NULL) {
-        activePriority = currentTask->priority;
-    }
+    if (currentTask != NULL) activePriority = currentTask->priority;
 
     for (int i = 0; i < taskCount; i++) {
-        // Tamamlanmamış, gelmiş ve şu an çalışmayan görevleri kontrol et
+        // Bitmemiş, sisteme girmiş ve şu an çalışmayanları kontrol et
         if (tasks[i].state != TASK_COMPLETED && tasks[i].state != TASK_NOT_ARRIVED && &tasks[i] != currentTask) {
             
             int timeInSystem = currentTime - tasks[i].arrivalTime;
-            int executedTime = tasks[i].burstTime - tasks[i].remainingTime;
-            int waitingTime = timeInSystem - executedTime;
+            int waitingTime = timeInSystem; // Basitleştirilmiş bekleme süresi
 
             if (waitingTime >= 20) {
-                /* KRİTİK DÜZELTME: AYNI ÖNCELİK KORUMASI
+                /* KORUMA MANTIĞI: 
                    Eğer silinecek görevin önceliği, şu an çalışan görevin önceliği ile AYNI ise
-                   onu silme. Çünkü sıra ona geliyor demektir (Round Robin/FCFS mantığı).
-                   Örneğin: P3 çalışırken, kuyruktaki diğer P3 zaman aşımına uğramaz.
+                   onu silme. Çünkü sıra ona geliyor demektir.
                 */
                 if (activePriority != -1 && tasks[i].priority == activePriority) {
-                    continue; // Görevi öldürme, pas geç
+                    continue; 
                 }
 
-                // Korumadan geçemediyse zaman aşımı uygula
                 tasks[i].state = TASK_COMPLETED;
                 
                 printf("%s%d.0000 sn\tproses zamanasimi\t(id:%04d\toncelik:%d\tkalan sure:%d sn)%s\n", 
@@ -55,30 +48,27 @@ void checkTimeouts() {
 
 /* GÖREV SEÇİM ALGORİTMASI */
 TaskInfo* selectNextTask() {
-    /* 1. ÖNCELİK 0 (Real-Time) - FCFS */
+    /* 1. ÖNCELİK 0 (Real-Time) */
     for (int i = 0; i < taskCount; i++) {
         if (tasks[i].state == TASK_READY && tasks[i].priority == 0) {
             return &tasks[i];
         }
     }
 
-    /* 2. DİĞER ÖNCELİKLER (1-5 Arası) - KUYRUK ZAMANI ÖNCELİKLİ (FCFS) */
+    /* 2. DİĞER ÖNCELİKLER (1-5 Arası) - KUYRUK ZAMANI ÖNCELİKLİ */
     for (int p = 1; p <= 5; p++) { 
         TaskInfo* selected = NULL;
         long long minQueueTime = -1;
 
         for (int i = 0; i < taskCount; i++) {
             if (tasks[i].state == TASK_READY && tasks[i].priority == p) {
-                // Kuyruğa daha önce giren (minQueueTime küçük olan) seçilir
                 if (selected == NULL || taskQueueTimes[i] < minQueueTime) {
                     selected = &tasks[i];
                     minQueueTime = taskQueueTimes[i];
                 }
-                // Eğer kuyruk zamanları eşitse ID'si küçük olana bak (Opsiyonel kararlılık)
                 else if (taskQueueTimes[i] == minQueueTime) {
-                    if (tasks[i].id < selected->id) {
-                        selected = &tasks[i];
-                    }
+                    // Eşitlik durumunda ID küçük olan avantajlı (Determinism)
+                    if (tasks[i].id < selected->id) selected = &tasks[i];
                 }
             }
         }
@@ -92,18 +82,18 @@ void T_Scheduler(void *pvParameters) {
     initScheduler();
 
     while (1) {
-        /* 1. YENİ GELENLERİ KABUL ET */
+        /* 1. YENİ GELENLER */
         for (int i = 0; i < taskCount; i++) {
             if (tasks[i].arrivalTime == currentTime) {
                 tasks[i].state = TASK_READY;
-                taskQueueTimes[i] = currentTime; // Kuyruğa giriş zamanı
+                taskQueueTimes[i] = currentTime; 
                 
                 xTaskCreate(T_Worker, "Worker", 1024, (void*)&tasks[i], tskIDLE_PRIORITY + 1, &tasks[i].handle);
                 vTaskSuspend(tasks[i].handle);
             }
         }
 
-        /* 2. MEVCUT GÖREVİ YÖNET */
+        /* 2. MEVCUT GÖREV YÖNETİMİ */
         if (currentTask != NULL) {
             if (currentTask->state == TASK_COMPLETED) {
                 currentTask = NULL;
@@ -130,8 +120,10 @@ void T_Scheduler(void *pvParameters) {
                         if (currentTask->priority < 5) {
                             currentTask->priority++;
                         }
-                        // Öncelik değişti veya askıya alındı -> Kuyruğun SONUNA at
+                        
+                        /* ZAMAN AŞIMI SIFIRLAMA (RESET) VE KUYRUK GÜNCELLEME */
                         taskQueueTimes[currentTask->id] = currentTime; 
+                        currentTask->arrivalTime = currentTime; // Öncelik değişince sayaç sıfırlanır
 
                         printf("%s%d.0000 sn\tproses askida\t\t(id:%04d\toncelik:%d\tkalan sure:%d sn)%s\n", 
                                currentTask->color, currentTime, currentTask->id, currentTask->priority, currentTask->remainingTime, ANSI_RESET);
@@ -140,12 +132,13 @@ void T_Scheduler(void *pvParameters) {
             }
         }
 
-        /* 3. YENİ GÖREV SEÇ (ÖNCE SEÇİM YAPILMALI) */
+        /* 3. SEÇİM YAP */
         TaskInfo *nextTask = selectNextTask();
 
         if (nextTask != NULL) {
-            // Mesaj Mantığı
-            if (nextTask->burstTime == nextTask->remainingTime) {
+            /* MESAJ MANTIĞI: Context Switch Kontrolü */
+            /* Eğer yeni seçilen görev, az önce çalışandan farklıysa -> BAŞLADI */
+            if (currentTask != nextTask) {
                  printf("%s%d.0000 sn\tproses basladi\t\t(id:%04d\toncelik:%d\tkalan sure:%d sn)%s\n", 
                        nextTask->color, currentTime, nextTask->id, nextTask->priority, nextTask->remainingTime, ANSI_RESET);
             } else {
@@ -162,8 +155,7 @@ void T_Scheduler(void *pvParameters) {
             currentTask = NULL;
         }
 
-        /* 4. ZAMAN AŞIMI KONTROLÜ (SEÇİMDEN SONRA) */
-        /* Seçilen görev (currentTask) bu fonksiyona parametre gibi etki eder */
+        /* 4. ZAMAN AŞIMI KONTROLÜ (Seçilen Hariç) */
         checkTimeouts();
 
         /* 5. ZAMANI İLERLET */
