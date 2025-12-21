@@ -13,25 +13,25 @@ void initScheduler() {
 
 /* ZAMAN AŞIMI KONTROLÜ */
 void checkTimeouts() {
+    int activePriority = -1;
+    if (currentTask != NULL) activePriority = currentTask->priority;
+
     for (int i = 0; i < taskCount; i++) {
-        // Sadece bitmemiş, gelmiş ve şu an çalışmayanları kontrol et
+        // Bitmemiş, sisteme girmiş ve şu an çalışmayanları kontrol et
         if (tasks[i].state != TASK_COMPLETED && tasks[i].state != TASK_NOT_ARRIVED && &tasks[i] != currentTask) {
             
-            /* Bekleme süresi hesabı */
-            // Not: Öncelik değişince arrivalTime güncellendiği için süre sıfırlanmış olur.
             int timeInSystem = currentTime - tasks[i].arrivalTime;
-            
-            // Eğer öncelik değişimiyle arrivalTime güncellendiyse, executedTime hesabını
-            // düşmemiz gerekmez (veya negatif çıkabilir), sadece o kuyruktaki bekleme süresine bakarız.
-            // Ancak basitlik adına: arrivalTime güncellendiği an timeInSystem 0 olur.
-            
-            int waitingTime = timeInSystem; 
-            // Daha hassas hesap için çalışılan süreyi düşmek istersek:
-            // int executedTime = tasks[i].burstTime - tasks[i].remainingTime;
-            // waitingTime -= executedTime;
-            // Ancak hocanın mantığında öncelik değişimi tam bir "reset" gibi görünüyor.
+            int waitingTime = timeInSystem; // Basitleştirilmiş bekleme süresi
 
             if (waitingTime >= 20) {
+                /* KORUMA MANTIĞI: 
+                   Eğer silinecek görevin önceliği, şu an çalışan görevin önceliği ile AYNI ise
+                   onu silme. Çünkü sıra ona geliyor demektir.
+                */
+                if (activePriority != -1 && tasks[i].priority == activePriority) {
+                    continue; 
+                }
+
                 tasks[i].state = TASK_COMPLETED;
                 
                 printf("%s%d.0000 sn\tproses zamanasimi\t(id:%04d\toncelik:%d\tkalan sure:%d sn)%s\n", 
@@ -67,6 +67,7 @@ TaskInfo* selectNextTask() {
                     minQueueTime = taskQueueTimes[i];
                 }
                 else if (taskQueueTimes[i] == minQueueTime) {
+                    // Eşitlik durumunda ID küçük olan avantajlı (Determinism)
                     if (tasks[i].id < selected->id) selected = &tasks[i];
                 }
             }
@@ -92,7 +93,7 @@ void T_Scheduler(void *pvParameters) {
             }
         }
 
-        /* 2. MEVCUT GÖREV */
+        /* 2. MEVCUT GÖREV YÖNETİMİ */
         if (currentTask != NULL) {
             if (currentTask->state == TASK_COMPLETED) {
                 currentTask = NULL;
@@ -120,11 +121,9 @@ void T_Scheduler(void *pvParameters) {
                             currentTask->priority++;
                         }
                         
-                        /* KRİTİK NOKTA: Öncelik değiştiği veya askıya alındığı için
-                           1. Kuyruğun sonuna at (Sıralama için)
-                           2. Geliş zamanını güncelle (Zaman Aşımı Sıfırlama için) */
+                        /* ZAMAN AŞIMI SIFIRLAMA (RESET) VE KUYRUK GÜNCELLEME */
                         taskQueueTimes[currentTask->id] = currentTime; 
-                        currentTask->arrivalTime = currentTime; // ZAMAN AŞIMI RESET!
+                        currentTask->arrivalTime = currentTime; // Öncelik değişince sayaç sıfırlanır
 
                         printf("%s%d.0000 sn\tproses askida\t\t(id:%04d\toncelik:%d\tkalan sure:%d sn)%s\n", 
                                currentTask->color, currentTime, currentTask->id, currentTask->priority, currentTask->remainingTime, ANSI_RESET);
@@ -137,8 +136,9 @@ void T_Scheduler(void *pvParameters) {
         TaskInfo *nextTask = selectNextTask();
 
         if (nextTask != NULL) {
-            // Mesaj Mantığı
-            if (nextTask->burstTime == nextTask->remainingTime) {
+            /* MESAJ MANTIĞI: Context Switch Kontrolü */
+            /* Eğer yeni seçilen görev, az önce çalışandan farklıysa -> BAŞLADI */
+            if (currentTask != nextTask) {
                  printf("%s%d.0000 sn\tproses basladi\t\t(id:%04d\toncelik:%d\tkalan sure:%d sn)%s\n", 
                        nextTask->color, currentTime, nextTask->id, nextTask->priority, nextTask->remainingTime, ANSI_RESET);
             } else {
